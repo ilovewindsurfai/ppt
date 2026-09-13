@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Focus Architecture : Audit & Performance Kogito vs Databricks</title>
+    <style>
+        :root {
+            --primary: #1e3a8a;
+            --primary-light: #2563eb;
+            --bg-main: #f8fafc;
+            --surface: #ffffff;
+            --text: #0f172a;
+            --text-muted: #475569;
+            --border: #e2e8f0;
+            --danger: #dc2626;
+            --warning: #d97706;
+            --success: #16a34a;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            color: var(--text);
+            background-color: var(--bg-main);
+            margin: 0;
+            padding: 2rem 1rem;
+        }
+
+        .container {
+            max-width: 950px;
+            margin: 0 auto;
+            background: var(--surface);
+            padding: 2.5rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+            border: 1px solid var(--border);
+        }
+
+        h1 {
+            color: var(--primary);
+            font-size: 1.875rem;
+            border-bottom: 3px solid var(--primary-light);
+            padding-bottom: 0.75rem;
+            margin-top: 0;
+        }
+
+        h2 {
+            color: var(--primary-light);
+            font-size: 1.35rem;
+            margin-top: 2.25rem;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 0.5rem;
+        }
+
+        h3 {
+            font-size: 1.1rem;
+            color: var(--text);
+            margin-top: 1.5rem;
+        }
+
+        .meta-box {
+            background-color: #eff6ff;
+            border-left: 4px solid var(--primary-light);
+            padding: 1rem;
+            border-radius: 0 8px 8px 0;
+            margin-bottom: 2rem;
+        }
+
+        .meta-box p {
+            margin: 0.25rem 0;
+            font-size: 0.95rem;
+            color: var(--text-muted);
+        }
+
+        .diagram-container {
+            background-color: #0f172a;
+            color: #38bdf8;
+            padding: 1.25rem;
+            border-radius: 8px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-size: 0.85rem;
+            overflow-x: auto;
+            white-space: pre;
+            margin: 1.5rem 0;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1.5rem 0;
+            font-size: 0.95rem;
+        }
+
+        th, td {
+            padding: 0.75rem 1rem;
+            text-align: left;
+            border: 1px solid var(--border);
+        }
+
+        th {
+            background-color: #f1f5f9;
+            color: var(--primary);
+            font-weight: 600;
+        }
+
+        tr:nth-child(even) {
+            background-color: #f8fafc;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-weight: 700;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+        }
+
+        .badge-danger {
+            background-color: #fef2f2;
+            color: var(--danger);
+            border: 1px solid #fecaca;
+        }
+
+        .badge-warning {
+            background-color: #fffbebfb;
+            color: var(--warning);
+            border: 1px solid #fef3c7;
+        }
+
+        .badge-success {
+            background-color: #f0fdf4;
+            color: var(--success);
+            border: 1px solid #bbf7d0;
+        }
+
+        .callout {
+            background-color: #f0fdf4;
+            border: 1px solid #bbf7d0;
+            border-left: 4px solid var(--success);
+            padding: 1.25rem;
+            border-radius: 0 8px 8px 0;
+            margin: 2rem 0;
+        }
+
+        .callout-warning {
+            background-color: #fffbeb;
+            border: 1px solid #fef3c7;
+            border-left: 4px solid var(--warning);
+        }
+
+        .callout strong {
+            color: #14532d;
+        }
+
+        .callout-warning strong {
+            color: #78350f;
+        }
+
+        ol, ul {
+            padding-left: 1.25rem;
+        }
+
+        li {
+            margin-bottom: 0.5rem;
+        }
+
+        code {
+            background-color: #f1f5f9;
+            padding: 0.2rem 0.4rem;
+            border-radius: 4px;
+            font-family: ui-monospace, monospace;
+            font-size: 0.9em;
+            color: #0f172a;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Focus Architecture : Analyse du Mode Batch & Exigences d'Audit (DMN)</h1>
+
+    <div class="meta-box">
+        <p><strong>Auteur :</strong> Équipe Data & Architecture</p>
+        <p><strong>Date :</strong> Septembre 2026</p>
+        <p><strong>Statut :</strong> Document d'Arbitrage Technique</p>
+        <p><strong>Sujet :</strong> Traitement Batch (80M de lignes) & Traçabilité de la Décision</p>
+    </div>
+
+    <h2>1. Contexte & Enjeux d'Audit</h2>
+    <p>L'exécution du moteur de règles métier sur un lot de <strong>80 millions de lignes</strong> répond à une exigence de décision automatique. Au-delà du simple calcul du résultat final, la solution doit garantir une <strong>traçabilité complète et inaltérable</strong> (auditabilité des décisions).</p>
+    
+    <p>Chaque décision doit conserver les éléments suivants :</p>
+    <ul>
+        <li><strong>Variables en entrée :</strong> Données brutes de la transaction / du client.</li>
+        <li><strong>Règles déclenchées (Matched Rules) :</strong> Identifiants exacts des lignes des tables de décision DMN appliquées.</li>
+        <li><strong>Sous-décisions intermédiaires :</strong> Valeurs calculées aux nœuds intermédiaires du graphe DMN.</li>
+        <li><strong>Résultat final & Horodatage :</strong> Décision rendue avec version du modèle DMN et timestamp.</li>
+    </ul>
+
+    <h2>2. Architecture de la Cinématique S3 / JSONLines</h2>
+    
+    <div class="diagram-container">
+┌─────────────────┐       Écriture ZIP       ┌───────────┐       Stream / Chunk        ┌─────────────────────┐
+│                 ├─────────────────────────►│           ├────────────────────────────►│                     │
+│  DATABRICKS     │                          │  AWS S3   │                             │ SPRING BOOT KOGITO  │
+│  (Data Lake)    │◄─────────────────────────┤ (Storage) │◄────────────────────────────┤ (Calcul DMN + Audit)│
+└─────────────────┘        Import Audit      └───────────┘       Dump JSON Audit       └─────────────────────┘
+    </div>
+
+    <h2>3. Structure du Log d'Audit Généré</h2>
+    <p>Pour chaque ligne traitée, Kogito génère une structure JSON verbeuse nécessaire aux exigences de conformité :</p>
+
+    <div class="diagram-container">{
+  "executionId": "exec-80m-98742-20260913",
+  "modelNamespace": "https://company.com/dmn/eligibilite",
+  "modelName": "ReglesEligibilite",
+  "timestamp": "2026-09-13T10:15:30Z",
+  "inputData": { "clientScore": 720, "montant": 15000 },
+  "auditLog": {
+    "matchedRules": ["Rule_Eligibilite_02", "Rule_Plafond_04"],
+    "subDecisions": { "ScoreRisqueCalculé": "FAIBLE", "PlafondAutorise": 20000 }
+  },
+  "decisionResult": { "statut": "APPROUVÉ" }
+}</div>
+
+    <h2>4. Impact de l'Audit sur les Performances Batch</h2>
+    <p>Le niveau d'audit requis impacte directement les performances et la viabilité de la cinématique Spring Boot Kogito :</p>
+
+    <table>
+        <thead>
+            <tr>
+                <th style="width: 25%;">Axe Audit & Infra</th>
+                <th style="width: 55%;">Impact Technique (80M de lignes)</th>
+                <th style="width: 20%;">Niveau de Risque</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>Volume d'Audit S3</strong></td>
+                <td>Générer l'audit complet fait passer la taille unitaire d'une ligne de ~100 octets à <strong>~500 octets / 1 Ko</strong>. Le volume total d'audit atteint <strong>40 à 80 Go de JSON</strong> sur S3.</td>
+                <td><span class="badge badge-danger">Critique</span></td>
+            </tr>
+            <tr>
+                <td><strong>Saturation RAM (Heap)</strong></td>
+                <td>L'instanciation des objets <code>DMNResult</code> et <code>DMNAuditEventListCollector</code> dans Kogito consomme énormément de mémoire JVM, augmentant le risque d'<code>OutOfMemoryError</code>.</td>
+                <td><span class="badge badge-danger">Critique</span></td>
+            </tr>
+            <tr>
+                <td><strong>Re-parsing Databricks</strong></td>
+                <td>Le fichier JSON d'audit déposé sur S3 doit être ré-analysé par Databricks pour réintégration dans le Data Lake, entraînant une double sérialisation très coûteuse.</td>
+                <td><span class="badge badge-warning">Élevé</span></td>
+            </tr>
+            <tr>
+                <td><strong>Traçabilité Native (Delta)</strong></td>
+                <td>En contournant Spark, on perd la traçabilité native du Data Lake (<em>Delta Lake Time Travel</em> et versioning ACID direct).</td>
+                <td><span class="badge badge-warning">Moyen</span></td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h2>5. Stratégie d'Audit Comparée : Kogito App vs Databricks Native</h2>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Besoin d'Audit</th>
+                <th>Spring Boot Kogito (via S3)</th>
+                <th>Databricks + Moteur DMN Embarqué (Option 3)</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>Captation des sous-décisions</strong></td>
+                <td>Via listeners Java <code>Kogito / DroolsListener</code>.</td>
+                <td>Via UDF Spark encapsulant <code>kie-dmn-core</code>.</td>
+            </tr>
+            <tr>
+                <td><strong>Format de stockage de l'audit</strong></td>
+                <td>JSONLines sur S3 (fichiers plats textuels).</td>
+                <td>Colonnes <code>Struct</code> / <code>Array</code> dans table Delta Parquet.</td>
+            </tr>
+            <tr>
+                <td><strong>Performance de requêtage SQL</strong></td>
+                <td>Lente (nécessite d'extraire le JSON à la volée).</td>
+                <td><strong>Immédiate</strong> (indexation Parquet + compression).</td>
+            </tr>
+            <tr>
+                <td><strong>Conformité & Durabilité</strong></td>
+                <td>Gestion manuelle de la rétention sur S3.</td>
+                <td>Rétention Delta Lake, RGPD (<em>Purge/Delete</em>) natif SQL.</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h2>6. Recommandation d'Architecture pour l'Audit</h2>
+
+    <div class="callout callout-warning">
+        <p><strong>Avis d'Architecture :</strong><br>
+        Le besoin d'un audit fin (sous-décisions + règles matchées) ne justifie pas le passage par une application externe Spring Boot. L'export de 80 Go d'audit en JSON via S3 crée un goulot d'étranglement majeur.</p>
+    </div>
+
+    <h3>Prochaine étape préconisée :</h3>
+    <ol>
+        <li><strong>Conserver la modélisation DMN</strong> établie par les équipes métier.</li>
+        <li><strong>Embarquer le moteur de décision DMN (<code>kie-dmn-core</code>) dans un UDF Spark</strong> directement sur Databricks.</li>
+        <li><strong>Stocker le résultat d'audit sous forme de colonne structurée (<code>StructType</code>)</strong> directement dans la table Delta cible.
+            <br><em>Résultat : Performance distribuée x10, zéro transfert S3/JSON et requêtage immédiat pour l'équipe conformité.</em>
+        </li>
+    </ol>
+</div>
+
+</body>
+</html>

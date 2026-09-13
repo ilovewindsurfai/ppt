@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Guide d'Architecture : Audit DMN natif dans Spark SQL</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; max-width: 900px; margin: 40px auto; padding: 0 20px; background: #f9f9f9; }
+        h1, h2, h3 { color: #111; }
+        h1 { border-bottom: 2px solid #eaeaea; padding-bottom: 10px; }
+        h2 { margin-top: 40px; color: #0066cc; }
+        pre { background: #1e1e1e; color: #d4d4d4; padding: 15px; border-radius: 6px; overflow-x: auto; font-family: Consolas, Monaco, monospace; font-size: 0.9em; }
+        code { font-family: Consolas, Monaco, monospace; background: #eef; padding: 2px 4px; border-radius: 4px; font-size: 0.9em; }
+        pre code { background: none; padding: 0; color: inherit; }
+        table { width: 100%; border-collapse: collapse; margin: 20px 0; background: #fff; }
+        th, td { border: 1px solid #ddd; padding: 10px 12px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .box { background: #fff; border-left: 4px solid #0066cc; padding: 15px 20px; margin: 20px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    </style>
+</head>
+<body>
+
+    <h1>Architecture d'Audit Natif DMN pour Spark & Databricks</h1>
+    
+    <div class="box">
+        <p><strong>Synthèse :</strong> Remplacement de l'architecture lourde Spring Boot Kogito (fichiers JSON sur S3, risques d'OOM, latence) par un <strong>transpiler DMN-vers-SQL natif</strong> exploitant les objets <code>STRUCT</code> de Spark. Zéro impact sur les performances, traçabilité exhaustive à l'échelle de 80 millions de lignes.</p>
+    </div>
+
+    <h2>1. Le Mécanisme Technique (`STRUCT` + Pattern Valeur/Règle)</h2>
+    <p>Le transpiler réutilise les <code>CASE WHEN</code> existants en faisant renvoyer par chaque règle un mini-objet (STRUCT) contenant à la fois la valeur métier (<code>.val</code>) et l'identifiant de la règle d'audit (<code>.rule_id</code>).</p>
+    
+    <pre><code>-- Exemple de code SQL généré par le transpileur
+WITH etape_score AS (
+  SELECT 
+    *,
+    CASE 
+      WHEN score_credit < 500 THEN STRUCT('ÉLEVÉ' AS val, 'RULE_SCORE_KO' AS rule_id)
+      ELSE STRUCT('FAIBLE' AS val, 'RULE_SCORE_OK' AS rule_id)
+    END AS res_score
+  FROM source_data
+),
+etape_decision AS (
+  SELECT 
+    *,
+    -- Le moteur utilise uniquement le .val pour la suite de la logique
+    CASE WHEN res_score.val = 'ÉLEVÉ' THEN 'REFUSÉ' ELSE 'ACCORDÉ' END AS val_ decision_finale
+  FROM etape_score
+)
+SELECT 
+  id_client,
+  val_decision_finale AS decision_finale,
+  -- L'objet d'audit complet regroupé en fin de requête
+  STRUCT(
+    STRUCT(res_score.val AS score, res_score.rule_id AS regle_score) AS sous_decisions,
+    ARRAY(res_score.rule_id) AS regles_matchees
+  ) AS audit_trail
+FROM etape_decision;</code></pre>
+
+    <h2>2. Avantages par rapport à une API externe (Kogito)</h2>
+    <table>
+        <tr>
+            <th>Critère</th>
+            <th>Spring Boot Kogito + S3</th>
+            <th>Transpiler SQL Natif (Struct)</th>
+        </tr>
+        <tr>
+            <td><strong>Temps de traitement (80M lignes)</strong></td>
+            <td>Lent (Heures, risques d'OOM réseau/S3)</td>
+            <td><strong>Ultra-rapide (Minutes, calcul distribué Spark)</strong></td>
+        </tr>
+        <tr>
+            <td><strong>Exploitation de l'audit</strong></td>
+            <td>Fichiers JSON lourds à parser en externe</td>
+            <td><strong>Directement requêtable en SQL (Dot notation)</strong></td>
+        </tr>
+        <tr>
+            <td><strong>Complexité d'infrastructure</strong></td>
+            <td>Élevée (Cluster d'API à administrer)</td>
+            <td><strong>Nulle (Intégré au Data Lake Delta Lake)</strong></td>
+        </tr>
+    </table>
+
+    <h2>3. Utilisation de l'audit dans Delta Lake</h2>
+    <pre><code>-- 1. Inspection simple d'une sous-décision
+SELECT id_client, decision_finale, audit_trail.sous_decisions.score 
+FROM table_decisions;
+
+-- 2. Filtrage métier avancé sur l'audit
+SELECT id_client 
+FROM table_decisions 
+WHERE array_contains(audit_trail.regles_matchees, 'RULE_SCORE_KO');</code></pre>
+
+    <h2>4. Prompt pour GitHub Copilot</h2>
+    <p>Utilisez le prompt ci-dessous pour adapter votre transpiler existant :</p>
+    
+    <pre><code>Agis en tant qu'architecte de données expert en transpilation DMN vers Spark SQL. 
+Je souhaite modifier mon transpiler existant pour qu'il intègre un mécanisme d'audit natif 
+basé sur des colonnes STRUCT Spark, sans modifier les performances de calcul des décisions.
+
+Voici les consignes d'implémentation pour le code du transpiler :
+1. Modifie la génération des expressions de règles (les CASE WHEN) pour qu'elles renvoient 
+   un objet structuré contenant deux champs : `val` (la valeur métier utilisée pour la suite) 
+   et `rule_id` (l'identifiant de la règle DMN déclenchée).
+2. Pour chaque sous-décision intermédiaire du graphe DMN (DRD), conserve le résultat dans 
+   une CTE nommée.
+3. À la fin de la génération du SQL, ajoute une colonne finale nommée `audit_trail` de type 
+   STRUCT qui imbrique l'ensemble des `sous_decisions` et un tableau `regles_matchees` 
+   recensant tous les rule_id traversés.
+4. Assure-toi que la décision finale de haut niveau utilise exclusivement la propriété `.val` 
+   des structures précédentes afin de ne pas perturber la logique métier d'origine.
+5. Fournis-moi le code mis à jour des fonctions de génération de clauses SELECT et STRUCT 
+   dans mon langage actuel.</code></pre>
+
+</body>
+</html>

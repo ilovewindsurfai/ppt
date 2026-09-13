@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<style>
+    body { font-family: 'Calibri', 'Segoe UI', Arial, sans-serif; line-height: 1.5; color: #2D3748; margin: 40px; }
+    h1 { color: #1A365D; border-bottom: 2px solid #2B6CB0; padding-bottom: 8px; font-size: 20pt; font-weight: bold; }
+    h2 { color: #2B6CB0; margin-top: 24px; font-size: 14pt; font-weight: bold; border-bottom: 1px solid #E2E8F0; padding-bottom: 4px; }
+    h3 { color: #2D3748; font-size: 12pt; font-weight: bold; }
+    p, li { font-size: 11pt; }
+    .header-info { background-color: #F7FAFC; border-left: 4px solid #2B6CB0; padding: 12px 16px; margin-bottom: 24px; }
+    .header-info p { margin: 4px 0; font-size: 10pt; color: #4A5568; }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; margin-bottom: 16px; font-size: 10pt; }
+    th { background-color: #2B6CB0; color: white; text-align: left; padding: 8px 12px; font-weight: bold; border: 1px solid #2B6CB0; }
+    td { border: 1px solid #E2E8F0; padding: 8px 12px; vertical-align: top; }
+    tr:nth-child(even) { background-color: #F7FAFC; }
+    .badge-high { color: #C53030; font-weight: bold; }
+    .badge-med { color: #DD6B20; font-weight: bold; }
+    .callout { background-color: #EBF8FF; border-left: 4px solid #3182CE; padding: 12px 16px; margin: 20px 0; }
+    .diagram { font-family: 'Consolas', 'Courier New', monospace; background-color: #2D3748; color: #EDF2F7; padding: 12px; border-radius: 4px; font-size: 9.5pt; white-space: pre; }
+</style>
+</head>
+<body>
+
+<h1>Focus Architecture : Analyse du mode Batch (S3 / JSONLines) pour Spring Boot Kogito</h1>
+
+<div class="header-info">
+    <p><strong>Auteur :</strong> Équipe Data & Architecture</p>
+    <p><strong>Date :</strong> Septembre 2026</p>
+    <p><strong>Statut :</strong> En révision / Arbitrage</p>
+    <p><strong>Projet :</strong> Moteur de Règles & Traitement Volumétrique (80 Millions de lignes)</p>
+</div>
+
+<h2>1. Contexte & Problématique</h2>
+<p>Dans le cadre de l'implémentation des règles métier DMN, l'équipe d'architecture propose l'utilisation du framework <strong>Spring Boot Kogito</strong>. Afin de répondre au besoin de traitement volumétrique (lot de <strong>80 millions de lignes</strong>), la cinématique envisagée consiste à faire transiter les données via <strong>AWS S3</strong> sous forme de fichiers <code>jsonlines</code> compressés en <code>.zip</code>.</p>
+<p>L'objectif de ce document est d'évaluer la pertinence technique, opérationnelle et financière de ce choix face aux capacités natives du cluster <strong>Databricks / Delta Lake</strong>.</p>
+
+<h2>2. Description de la Cinématique Envisagée</h2>
+
+<div class="diagram">
++-----------------+       Écriture ZIP       +-----------+       Lecture & Unzip       +---------------------+
+|                 |------------------------->|           |---------------------------->|                     |
+|  DATABRICKS     |                          |  AWS S3   |                             | SPRING BOOT KOGITO  |
+|  (Data Lake)    |<-------------------------| (Storage) |<----------------------------| (Calcul DMN)        |
++-----------------+        Lecture Audit     +-----------+       Écriture Audit        +---------------------+
+</div>
+
+<ol>
+    <li><strong>Extraction :</strong> Databricks génère et dépose un fichier <code>jsonlines</code> géant de 80M de lignes compressé (<code>.zip</code>) sur un bucket AWS S3.</li>
+    <li><strong>Traitement :</strong> L'application applicative Spring Boot Kogito télécharge le fichier, le décompresse, exécute le moteur DMN et génère la structure d'audit (résultats des sous-décisions et règles matchées).</li>
+    <li><strong>Restitution :</strong> Spring Boot réécrit les résultats enrichis de l'audit sous forme de fichier JSON sur AWS S3, relu ultérieurement par les pipelines Databricks.</li>
+</ol>
+
+<h2>3. Analyse d'Impact & Matrice des Risques</h2>
+<p>L'analyse technique met en évidence un décalage entre l'outil applicatif utilisé et la nature du besoin (Big Data Batch).</p>
+
+<table>
+    <thead>
+        <tr>
+            <th style="width: 25%;">Axe d'analyse</th>
+            <th style="width: 60%;">Constat & Impact technique</th>
+            <th style="width: 15%;">Niveau de risque</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td><strong>Volumétrie & Mémoire</strong></td>
+            <td>80M de lignes d'audit représentent <strong>15 à 40 Go de JSON uncompressed</strong>. Risque majeur de saturation de la Heap JVM (<em>OutOfMemoryError</em>) sur Spring Boot lors de la sérialisation/désérialisation.</td>
+            <td class="badge-high">ÉLEVÉ</td>
+        </tr>
+        <tr>
+            <td><strong>Parallélisme & Scalabilité</strong></td>
+            <td>Le format ZIP impose un dépilement séquentiel. On <strong>annule la capacité de calcul distribué de Databricks</strong> en transférant le traitement lourd à un runtime applicatif mono-instance.</td>
+            <td class="badge-high">ÉLEVÉ</td>
+        </tr>
+        <tr>
+            <td><strong>Résilience & Operations</strong></td>
+            <td>Absence de <em>checkpointing</em> natif dans Spring Boot. En cas de crash à la 75<sup>ème</sup> millionième ligne, l'intégralité du traitement batch doit être rejouée depuis le début.</td>
+            <td class="badge-high">ÉLEVÉ</td>
+        </tr>
+        <tr>
+            <td><strong>Complexité de Développement</strong></td>
+            <td>Obligation de développer au sein de Spring Boot une logique « fait maison » de multithreading / chunking pour absorber le volume, recodant ce que Spark fait nativement.</td>
+            <td class="badge-med">MOYEN</td>
+        </tr>
+        <tr>
+            <td><strong>Coût d'Infrastructure</strong></td>
+            <td>Inefficience financière : sous-utilisation des nœuds Databricks en attente + surdimensionnement obligatoire des instances Spring Boot (CPU/RAM) pour les pics batch.</td>
+            <td class="badge-med">MOYEN</td>
+        </tr>
+    </tbody>
+</table>
+
+<h2>4. Étude Comparative des Alternatives</h2>
+
+<table>
+    <thead>
+        <tr>
+            <th>Critère</th>
+            <th>Option 1 : Pure SQL Databricks</th>
+            <th>Option 2 : Spring Boot Kogito (via S3)</th>
+            <th>Option 3 : Lib DMN Native dans Spark</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td><strong>Lieu d'exécution</strong></td>
+            <td>Cluster Databricks</td>
+            <td>Serveur Spring Boot externe</td>
+            <td>Cluster Databricks (Executors)</td>
+        </tr>
+        <tr>
+            <td><strong>Throughput / Débit</strong></td>
+            <td><strong>Ultra-rapide</strong> (Vectorisé Parquet)</td>
+            <td><strong>Faible à Moyen</strong> (Bridé par le JSON)</td>
+            <td><strong>Excellent</strong> (In-Memory Spark)</td>
+        </tr>
+        <tr>
+            <td><strong>Finesse d'audit</strong></td>
+            <td>Décision finale uniquement</td>
+            <td>Sous-décisions + Matched Rules</td>
+            <td>Sous-décisions + Matched Rules</td>
+        </tr>
+        <tr>
+            <td><strong>Traçabilité</strong></td>
+            <td>Native (<em>Delta Lake Time Travel</em>)</td>
+            <td>Fichier JSON d'audit sur S3</td>
+            <td>Native (<em>Delta Lake Struct/JSON</em>)</td>
+        </tr>
+        <tr>
+            <td><strong>Complexité Infra</strong></td>
+            <td>Minimale (0 composant de plus)</td>
+            <td>Élevée (Cluster App + Monitoring)</td>
+            <td>Faible (Dépendance JAR Java/Scala)</td>
+        </tr>
+    </tbody>
+</table>
+
+<h2>5. Recommandations & Arbitrage</h2>
+
+<div class="callout">
+    <p><strong>Synthèse de l'évaluation :</strong><br>
+    Le transfert de S3 à S3 résout la bande passante réseau, mais <strong>l'utilisation de Spring Boot Kogito comme moteur de traitement Batch reste un anti-pattern d'architecture Big Data</strong>.</p>
+</div>
+
+<h3>Pistes d'arbitrage proposées :</h3>
+<ol>
+    <li><strong>Si l'audit détaillé des tables intermédiaires N'EST PAS réglementaire :</strong><br>
+    ➡️ <strong>Recommandation :</strong> Basculer sur l'<strong>Option 1 (Databricks SQL Natif)</strong>. C'est la solution la plus performante, la moins chère et la plus simple à maintenir. L'auditabilité globale est assurée par le versioning <em>Delta Lake Time Travel</em> et les commits Git des règles.</li>
+    <br>
+    <li><strong>Si l'audit détaillé de chaque sous-table de décision EST obligatoire :</strong><br>
+    ➡️ <strong>Recommandation :</strong> Implémenter l'<strong>Option 3 (Moteur DMN embarqué sous forme d'UDF / librairie Java native dans Spark)</strong>. Cette approche conserve 100 % de la finesse d'audit DMN de Kogito (via la même librairie <code>kie-dmn-core</code>), tout en exécutant le calcul de manière distribuée et native au sein de Databricks.</li>
+</ol>
+
+</body>
+</html>
